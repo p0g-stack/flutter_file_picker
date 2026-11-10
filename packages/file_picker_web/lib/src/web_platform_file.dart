@@ -88,28 +88,37 @@ base class WebPlatformFile extends PlatformFile {
   final Uint8List? _bytes;
   final Stream<Uint8List>? _readStream;
 
-  /// Whether the page can read this file now, without asking the user.
+  /// Whether the page has [mode] access to this file now, without asking the
+  /// user.
   ///
   /// A file from `<input type="file">` is always readable, since the browser
   /// already handed its content over. A persisted file keeps its read access
   /// only while another tab of the site has it, or when the user chose to allow
   /// it on every visit, so pass a restored one through this before reading it.
-  Future<bool> hasAccess() async {
+  ///
+  /// [FilePermissionMode.readWrite] asks whether the file's content can be
+  /// replaced instead, which a file the user picked to save to needs before a
+  /// second save writes over it.
+  Future<bool> hasAccess({
+    FilePermissionMode mode = FilePermissionMode.read,
+  }) async {
     final handle = _handle;
     if (handle == null) return true;
-    return hasReadPermission(handle);
+    return hasPermission(handle, mode: mode);
   }
 
-  /// Asks the user for read access to this file if the page doesn't have it
+  /// Asks the user for [mode] access to this file if the page doesn't have it
   /// yet, and returns whether it has it now.
   ///
   /// The browser only shows the prompt for a user gesture, so call it from a
   /// click handler with nothing awaited before it. Returns `false` when the
   /// user denies access.
-  Future<bool> requestAccess() async {
+  Future<bool> requestAccess({
+    FilePermissionMode mode = FilePermissionMode.read,
+  }) async {
     final handle = _handle;
     if (handle == null) return true;
-    return requestReadPermission(handle);
+    return requestPermission(handle, mode: mode);
   }
 
   /// Reads this file through its [handle] and returns the browser's [File].

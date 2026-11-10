@@ -1,7 +1,8 @@
 ## 4.3.0
 
 - Added `FilePickerWebOptions.dialog`, `pickerId` and `types`. `WebFileDialog.fileSystemAccess` picks through the browser's file system access dialog, and `supportsShowOpenFilePicker` tells whether the browser supports it. The picked file keeps the browser's `File`, which ranged reads go through, and the handle it came from. [#770](https://github.com/vicajilau/flutter_file_picker/issues/770)
-- Added `WebPlatformFile.persist()`, `restore()`, `forget()`, `hasAccess()` and `requestAccess()`, which remember a picked file across page reloads in IndexedDB and renew the browser's read permission for it.
+- Added `WebPlatformFile.persist()`, `restore()`, `forget()`, `hasAccess()` and `requestAccess()`, which remember a picked file across page reloads in IndexedDB and renew the browser's read permission for it. Both take a `FilePermissionMode`, so a handle the user picked to save to can be checked and renewed for `readWrite`.
+- Added `hasPermission()` and `requestPermission()`, which take a `FilePermissionMode` and work on a handle that is not a `WebPlatformFile`, such as one the page remembered to write into.
 
 ## 4.2.1
 

@@ -285,7 +285,12 @@ A remembered file keeps its read permission only while another tab of the site
 has it, or when the user allowed it on every visit, so check
 `WebPlatformFile.hasAccess()` and renew it from a click with `requestAccess()`
 before reading. `WebPlatformFile.forget(token)` drops it. Files picked through
-the input have no handle, so `persist()` returns `null` for them.
+the input have no handle, so `persist()` returns `null` for them. Both methods
+take a `FilePermissionMode`: a handle the app keeps to write into later, such
+as one from `showSaveFilePicker()`, needs
+`requestAccess(mode: FilePermissionMode.readWrite)`, or the bare
+`requestPermission(handle, mode: FilePermissionMode.readWrite)` when it is not a
+`WebPlatformFile`.
 
 #### Recover a pick on Android
 

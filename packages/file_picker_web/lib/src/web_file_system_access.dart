@@ -79,15 +79,36 @@ JSObject _acceptType(WebFileTypeFilter type) {
   return entry;
 }
 
-/// The descriptor both permission methods take.
-JSObject get _readMode => JSObject()..['mode'] = 'read'.toJS;
+/// What the page asks a handle to allow.
+enum FilePermissionMode {
+  /// Read the file's content, which is what picking gives a handle.
+  read('read'),
 
-/// Whether the page can read [handle] now, without asking the user.
+  /// Read and write the file's content, which a handle the user chose to save
+  /// to needs before it can be replaced.
+  readWrite('readwrite');
+
+  const FilePermissionMode(this.descriptor);
+
+  /// The `mode` of the descriptor the browser's permission methods take.
+  final String descriptor;
+}
+
+/// The descriptor [hasPermission] and [requestPermission] take for [mode].
+JSObject _mode(FilePermissionMode mode) =>
+    JSObject()..['mode'] = mode.descriptor.toJS;
+
+/// Whether the page has [mode] access to [handle] now, without asking the
+/// user.
 ///
 /// A handle from `showOpenFilePicker()` or `showSaveFilePicker()` has it. One
 /// loaded back from a token keeps it only while another tab of the site still
 /// has it, or when the user chose to allow it on every visit. Otherwise call
-/// [requestReadPermission] from a button.
+/// [requestPermission] from a button.
+///
+/// [FilePermissionMode.readWrite] is about the file's content: a handle the
+/// user picked to save to reports it as granted only while the page may
+/// replace that content.
 ///
 /// Browsers without `queryPermission()`, such as Firefox and Safari, return
 /// `true`: they have no `showOpenFilePicker()` either, so a handle they give
@@ -97,16 +118,19 @@ JSObject get _readMode => JSObject()..['mode'] = 'read'.toJS;
 ///
 /// It is about permission only: a file that was deleted still returns `true`,
 /// and reading it throws a `NotFoundError`.
-Future<bool> hasReadPermission(FileSystemFileHandle handle) async {
+Future<bool> hasPermission(
+  FileSystemFileHandle handle, {
+  FilePermissionMode mode = FilePermissionMode.read,
+}) async {
   if (!handle.has('queryPermission')) return true;
   final state = await handle
-      .callMethod<JSPromise<JSString>>('queryPermission'.toJS, _readMode)
+      .callMethod<JSPromise<JSString>>('queryPermission'.toJS, _mode(mode))
       .toDart;
   return state.toDart == 'granted';
 }
 
-/// Asks the user for read access to [handle] if the page doesn't have it yet,
-/// and returns whether it has it now.
+/// Asks the user for [mode] access to [handle] if the page doesn't have it
+/// yet, and returns whether it has it now.
 ///
 /// The browser only shows the prompt for a user gesture, so call it from a
 /// click handler with nothing awaited before it. Returns `false` when the user
@@ -114,11 +138,14 @@ Future<bool> hasReadPermission(FileSystemFileHandle handle) async {
 /// be shown at all.
 ///
 /// Browsers without `requestPermission()` return `true` without a prompt, for
-/// the same reason as [hasReadPermission].
-Future<bool> requestReadPermission(FileSystemFileHandle handle) async {
+/// the same reason as [hasPermission].
+Future<bool> requestPermission(
+  FileSystemFileHandle handle, {
+  FilePermissionMode mode = FilePermissionMode.read,
+}) async {
   if (!handle.has('requestPermission')) return true;
   final state = await handle
-      .callMethod<JSPromise<JSString>>('requestPermission'.toJS, _readMode)
+      .callMethod<JSPromise<JSString>>('requestPermission'.toJS, _mode(mode))
       .toDart;
   return state.toDart == 'granted';
 }

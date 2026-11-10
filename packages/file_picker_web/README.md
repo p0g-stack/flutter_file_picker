@@ -75,3 +75,23 @@ Tokens live in the origin's own storage. A browser that clears site data, or a
 different browser profile, loses them: `restore()` then returns `null`, and the
 app has to ask for the file again.
 
+### Writing a file the page remembered
+
+A handle the user picked to save to needs the `readwrite` mode, not `read`.
+`hasAccess()` and `requestAccess()` take it as `FilePermissionMode.readWrite`,
+and `hasPermission()`/`requestPermission()` do the same for a bare handle the
+app kept on its own, such as one loaded from `loadHandle()`:
+
+```dart
+final handle = await loadHandle(writeToken);
+if (handle != null && await hasPermission(handle, mode: FilePermissionMode.readWrite)) {
+  final file = await handle.getFile();    // readable content of the same file
+  final writable = await handle.createWritable();
+  // ...
+}
+```
+
+Without `readwrite` — after a reload, unless the user allowed the site on every
+visit — `createWritable()` throws a `NotAllowedError`, so call
+`requestPermission` from the click that starts the write.
+

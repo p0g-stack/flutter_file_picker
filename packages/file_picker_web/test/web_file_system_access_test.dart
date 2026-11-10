@@ -28,30 +28,37 @@ class _FakeFileHandle {
   _FakeFileHandle({
     required this.name,
     required this.contents,
-    this.permission = 'granted',
-  });
+    String permission = 'granted',
+    String? writePermission,
+  }) : permissions = {
+         'read': permission,
+         'readwrite': writePermission ?? permission,
+       };
 
   final String name;
   final String contents;
 
-  /// What `queryPermission()` and `requestPermission()` report.
-  String permission;
+  /// What `queryPermission()` and `requestPermission()` report, per mode.
+  final Map<String, String> permissions;
 
-  int queryCalls = 0;
-  int requestCalls = 0;
+  /// The modes each permission method was asked about, in order.
+  final queriedModes = <String?>[];
+  final requestedModes = <String?>[];
 
   JSPromise<File> getFile() =>
       Future.value(File([utf8.encode(contents).toJS].toJS, name)).toJS;
 
   JSPromise<JSString> queryPermission(JSObject descriptor) {
-    queryCalls++;
-    return Future.value(permission.toJS).toJS;
+    final mode = (descriptor.dartify()! as Map)['mode'] as String?;
+    queriedModes.add(mode);
+    return Future.value((permissions[mode] ?? 'denied').toJS).toJS;
   }
 
   JSPromise<JSString> requestPermission(JSObject descriptor) {
-    requestCalls++;
-    permission = 'granted';
-    return Future.value(permission.toJS).toJS;
+    final mode = (descriptor.dartify()! as Map)['mode'] as String?;
+    requestedModes.add(mode);
+    permissions[mode!] = 'granted';
+    return Future.value(permissions[mode]!.toJS).toJS;
   }
 }
 
@@ -418,16 +425,60 @@ void main() {
       expect(file.uri, Uri());
       expect(file.lengthSync(), isNull);
       expect(await file.hasAccess(), isFalse);
-      expect(fake.queryCalls, 1);
+      expect(fake.queriedModes, ['read']);
 
       expect(await file.requestAccess(), isTrue);
-      expect(fake.requestCalls, 1);
+      expect(fake.requestedModes, ['read']);
 
       final read = await file.getFile();
       expect(read.name, 'locked.zip');
       expect(file.file, isNotNull);
       expect(file.lengthSync(), 3);
       expect(utf8.decode(await file.readAsBytes()), 'zip');
+    });
+
+    test('asks for write access with the readWrite mode', () async {
+      final fake = _FakeFileHandle(
+        name: 'save.zip',
+        contents: 'zip',
+        writePermission: 'prompt',
+      );
+      final file = WebPlatformFile(name: fake.name, handle: _fakeHandle(fake));
+
+      // Read access does not imply the content may be replaced.
+      expect(await file.hasAccess(), isTrue);
+      expect(await file.hasAccess(mode: FilePermissionMode.readWrite), isFalse);
+      expect(fake.queriedModes, ['read', 'readwrite']);
+
+      expect(
+        await file.requestAccess(mode: FilePermissionMode.readWrite),
+        isTrue,
+      );
+      expect(fake.requestedModes, ['readwrite']);
+      expect(await file.hasAccess(mode: FilePermissionMode.readWrite), isTrue);
+    });
+
+    test('checks the mode of a handle the page kept itself', () async {
+      final fake = _FakeFileHandle(
+        name: 'saved.zip',
+        contents: 'zip',
+        writePermission: 'prompt',
+      );
+      final handle = _fakeHandle(fake);
+
+      expect(await hasPermission(handle), isTrue);
+      expect(
+        await hasPermission(handle, mode: FilePermissionMode.readWrite),
+        isFalse,
+      );
+      expect(fake.queriedModes, ['read', 'readwrite']);
+
+      expect(
+        await requestPermission(handle, mode: FilePermissionMode.readWrite),
+        isTrue,
+      );
+      expect(fake.requestedModes, ['readwrite']);
+      expect(FilePermissionMode.readWrite.descriptor, 'readwrite');
     });
   });
 }

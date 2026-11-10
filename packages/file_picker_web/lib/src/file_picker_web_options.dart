@@ -1,7 +1,54 @@
 /// @docImport 'file_picker_web.dart';
+/// @docImport 'web_platform_file.dart';
 library;
 
 import 'package:file_picker_platform_interface/file_picker_platform_interface.dart';
+
+/// How [FilePickerWeb.pickFile] and [FilePickerWeb.pickFiles] open the
+/// browser's open dialog on the web.
+enum WebFileDialog {
+  /// Uses `<input type="file">`, which is what picking did before
+  /// [FilePickerWebOptions.dialog] existed: the file system access dialog is
+  /// only used when it is asked for.
+  ///
+  /// Picked files have no [WebPlatformFile.handle], so they can't be
+  /// persisted, and only exist for as long as the page does.
+  input,
+
+  /// Uses the file system access dialog where the browser has one and the pick
+  /// can be filtered with [FilePickerWebOptions.types], and `<input
+  /// type="file">` everywhere else.
+  ///
+  /// The picked file then carries a handle, which [WebPlatformFile.persist]
+  /// can store, and both [WebPlatformFile.hasAccess] and
+  /// [WebPlatformFile.requestAccess] work on its content. It falls back to the
+  /// input when the browser refuses to open the dialog, typically because
+  /// there was no recent user gesture.
+  auto,
+
+  /// Always uses the file system access dialog, and throws an
+  /// [UnsupportedError] where the browser has none, or an [ArgumentError] when
+  /// the pick has no [FilePickerWebOptions.types] to filter it with.
+  fileSystemAccess,
+}
+
+/// A file type the file system access dialog accepts, as a
+/// [FilePickerWebOptions.types] entry.
+final class WebFileTypeFilter {
+  /// Creates a filter for the given [accept] map and optional [description].
+  const WebFileTypeFilter({required this.accept, this.description = ''});
+
+  /// The MIME types this filter accepts, mapped to the file extensions each
+  /// one covers, such as `{'application/zip': ['.zip']}`.
+  ///
+  /// The dialog checks every listed extension against its MIME type, so a
+  /// mismatched pair leaves the filter empty. Extensions include the leading
+  /// dot, unlike `allowedExtensions`.
+  final Map<String, List<String>> accept;
+
+  /// The label the dialog shows for this filter.
+  final String description;
+}
 
 /// How [FilePickerWeb.saveFile] saves the file on the web.
 enum WebSaveFileMode {
@@ -51,6 +98,26 @@ final class FilePickerWebOptions extends WebOptions {
   /// [WebSaveFileMode.download].
   final WebSaveFileMode saveMode;
 
+  /// How [FilePickerWeb.pickFile] and [FilePickerWeb.pickFiles] open the
+  /// browser's open dialog. Defaults to [WebFileDialog.input], the behaviour
+  /// before this option existed.
+  final WebFileDialog dialog;
+
+  /// The `id` the browser keys the remembered folder of the file system access
+  /// dialog on. Two picks with the same id reopen where the last one left off.
+  ///
+  /// Ignored by [WebFileDialog.input].
+  final String? pickerId;
+
+  /// The file types the file system access dialog accepts.
+  ///
+  /// It is the only way to filter that dialog: `type` and `allowedExtensions`
+  /// only apply to the `<input type="file">` fallback, so [WebFileDialog.auto]
+  /// keeps using the input for a pick they filter and this leaves empty.
+  ///
+  /// Ignored by [WebFileDialog.input].
+  final List<WebFileTypeFilter> types;
+
   /// Creates an instance of [FilePickerWebOptions].
   const FilePickerWebOptions({
     @Deprecated(
@@ -70,5 +137,8 @@ final class FilePickerWebOptions extends WebOptions {
     this.readSequential = false,
     this.cancelUploadOnWindowBlur = true,
     this.saveMode = WebSaveFileMode.download,
+    this.dialog = WebFileDialog.input,
+    this.pickerId,
+    this.types = const <WebFileTypeFilter>[],
   });
 }

@@ -246,6 +246,47 @@ imported when compiling for the web. In an app that also targets other
 platforms, build the options in a web only file chosen with a conditional
 import (`if (dart.library.js_interop)`).
 
+#### File system access dialog on the web
+
+`pickFile()` and `pickFiles()` use `<input type="file">` by default. Where the
+browser has `showOpenFilePicker()`, they can go through its file system access
+dialog instead, which hands back a handle the app can keep:
+
+```dart
+final file = await FilePicker.pickFile(
+  webOptions: FilePickerWebOptions(
+    dialog: WebFileDialog.fileSystemAccess,
+    pickerId: 'ota',
+    types: [
+      WebFileTypeFilter(
+        description: 'OTA package',
+        accept: {
+          'application/zip': ['.zip'],
+        },
+      ),
+    ],
+  ),
+) as WebPlatformFile?;
+
+final token = await file?.persist();
+final again = await (await WebPlatformFile.restore(token!))?.getFile();
+```
+
+`WebFileDialog.auto` uses the dialog where the browser has it and keeps the
+input elsewhere, including where `type` or `allowedExtensions` filter the pick,
+since the dialog only understands `types`. `FilePickerWebOptions.dialog`
+defaults to `WebFileDialog.input`, which is picking as it was before the option
+existed, so the dialog is only used when it is asked for. Cancelling returns
+`null` like the input does. `supportsShowOpenFilePicker` says whether the API is
+available, and `WebFileDialog.fileSystemAccess` throws an `UnsupportedError`
+without it.
+
+A remembered file keeps its read permission only while another tab of the site
+has it, or when the user allowed it on every visit, so check
+`WebPlatformFile.hasAccess()` and renew it from a click with `requestAccess()`
+before reading. `WebPlatformFile.forget(token)` drops it. Files picked through
+the input have no handle, so `persist()` returns `null` for them.
+
 #### Recover a pick on Android
 
 When the operating system is low on memory, Android can destroy the app while

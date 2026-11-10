@@ -1,3 +1,8 @@
+## 4.3.0
+
+- Added `FilePickerWebOptions.dialog`, `pickerId` and `types`. `WebFileDialog.fileSystemAccess` picks through the browser's file system access dialog, and `supportsShowOpenFilePicker` tells whether the browser supports it. The picked file keeps the browser's `File`, which ranged reads go through, and the handle it came from. [#770](https://github.com/vicajilau/flutter_file_picker/issues/770)
+- Added `WebPlatformFile.persist()`, `restore()`, `forget()`, `hasAccess()` and `requestAccess()`, which remember a picked file across page reloads in IndexedDB and renew the browser's read permission for it.
+
 ## 4.2.1
 
 - Fixed `FileType.media` not filtering anything, since its `accept` filter separated the types with `|` instead of a comma. [#2323](https://github.com/vicajilau/flutter_file_picker/pull/2323)

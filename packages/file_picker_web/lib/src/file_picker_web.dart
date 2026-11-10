@@ -13,6 +13,7 @@ import 'platform_file_web_fetch.dart';
 import 'preload_policy.dart';
 import 'save_file_dialog.dart';
 import 'web_file_input_session.dart';
+import 'web_file_system_access.dart';
 import 'web_platform_file.dart';
 
 /// An implementation of [FilePickerPlatform] for the Web platform.
@@ -20,6 +21,11 @@ import 'web_platform_file.dart';
 /// Uses standard HTML5 `<input type="file">` element interop via `package:web`
 /// to provide single and multiple file picking, as well as file saving capabilities
 /// in browser environments.
+///
+/// Where the browser has `showOpenFilePicker()`, picking can go through its
+/// file system access dialog instead, see [FilePickerWebOptions.dialog]. The
+/// picked files then keep a handle, which [WebPlatformFile.persist] can store
+/// to remember them across page loads.
 class FilePickerWeb extends FilePickerPlatform {
   static const String _kFilePickerInputsDomId = '__file_picker_web-file-input';
 
@@ -129,6 +135,16 @@ class FilePickerWeb extends FilePickerPlatform {
         ? webOptions
         : const FilePickerWebOptions();
 
+    if (_usesFileSystemAccess(effectiveWebOptions, type)) {
+      final List<PlatformFile>? picked = await _pickWithFileSystemAccess(
+        webOptions: effectiveWebOptions,
+        type: type,
+        onFileLoading: onFileLoading,
+        allowMultiple: allowMultiple,
+      );
+      if (picked != null) return picked;
+    }
+
     final session = WebFileInputSession(
       target: _target,
       accept: _fileType(type, allowedExtensions),
@@ -140,6 +156,106 @@ class FilePickerWeb extends FilePickerPlatform {
 
     final List<PlatformFile>? files = await session.start();
     return files ?? <PlatformFile>[];
+  }
+
+  /// Whether this pick opens the browser's file system access dialog.
+  ///
+  /// It is synchronous on purpose: [_pickFiles] decides before its first
+  /// `await`, so a pick that stays on `<input type="file">` still attaches the
+  /// input element in the caller's own task, where the click that opened the
+  /// picker is still recent.
+  static bool _usesFileSystemAccess(
+    FilePickerWebOptions webOptions,
+    FileType type,
+  ) {
+    return switch (webOptions.dialog) {
+      // Asking for the dialog keeps asking, so the pick reports why it cannot
+      // be shown rather than silently picking through the input.
+      WebFileDialog.fileSystemAccess => true,
+      WebFileDialog.input => false,
+      // The dialog can only be filtered with `types`, while every other [type]
+      // has an `accept` the input understands and the dialog has no equivalent
+      // for, so such a pick keeps the input instead of accepting every file.
+      WebFileDialog.auto =>
+        supportsShowOpenFilePicker &&
+            (webOptions.types.isNotEmpty || type == FileType.any),
+    };
+  }
+
+  /// Picks through the browser's file system access dialog, or returns `null`
+  /// when the browser refused to open it and this pick has to go through
+  /// `<input type="file">` instead.
+  ///
+  /// Returns an empty list when the user cancels the dialog.
+  Future<List<PlatformFile>?> _pickWithFileSystemAccess({
+    required FilePickerWebOptions webOptions,
+    required FileType type,
+    required Function(FilePickerStatus)? onFileLoading,
+    required bool allowMultiple,
+  }) async {
+    final dialog = webOptions.dialog;
+    if (!supportsShowOpenFilePicker) {
+      throw UnsupportedError(
+        'This browser does not support the showOpenFilePicker API.',
+      );
+    }
+    if (webOptions.types.isEmpty && type != FileType.any) {
+      throw ArgumentError(
+        'FilePickerWebOptions.types is required to filter the file system '
+        'access dialog. Use WebFileDialog.input to filter with type or '
+        'allowedExtensions instead.',
+      );
+    }
+
+    final List<FileSystemFileHandle>? handles;
+    try {
+      onFileLoading?.call(FilePickerStatus.picking);
+      handles = await showFileSystemAccessPicker(
+        types: webOptions.types,
+        pickerId: webOptions.pickerId,
+        multiple: allowMultiple,
+      );
+    } catch (_) {
+      // The browser refused to open it, typically because there was no recent
+      // user gesture, and the input falls back to its own handling of that.
+      if (dialog == WebFileDialog.fileSystemAccess) rethrow;
+      return null;
+    }
+
+    if (handles == null) return <PlatformFile>[];
+
+    try {
+      return await _processHandles(handles, webOptions);
+    } finally {
+      onFileLoading?.call(FilePickerStatus.done);
+    }
+  }
+
+  /// Converts the picked [handles] to [PlatformFile]s, keeping each handle on
+  /// the file it belongs to.
+  ///
+  /// Reads files one at a time when [FilePickerWebOptions.readSequential] is
+  /// `true`, or concurrently otherwise; either way the result preserves the
+  /// original selection order.
+  Future<List<PlatformFile>> _processHandles(
+    List<FileSystemFileHandle> handles,
+    FilePickerWebOptions webOptions,
+  ) async {
+    Future<PlatformFile?> processHandleAt(int index) async {
+      final handle = handles[index];
+      return _processFile(
+        await handle.getFile().toDart,
+        handle: handle,
+        webOptions: webOptions,
+      );
+    }
+
+    final results = await runIndexedTasks(
+      handles.length,
+      processHandleAt,
+      sequential: webOptions.readSequential,
+    );
+    return results.whereType<PlatformFile>().toList();
   }
 
   /// Processes the selected [FileList] according to [webOptions] and returns
@@ -155,20 +271,7 @@ class FilePickerWeb extends FilePickerPlatform {
     Future<PlatformFile?> processFileAt(int index) async {
       final file = files.item(index);
       if (file == null) return null;
-
-      if (webOptions.withReadStream) {
-        return _createWebPlatformFile(
-          file: file,
-          readStream: streamBlobInChunks(file),
-        );
-      }
-
-      if (!shouldPreloadBytes(file.size, withData: webOptions.withData)) {
-        return _createWebPlatformFile(file: file);
-      }
-
-      final bytes = await _readSingleFileBytes(file);
-      return _createWebPlatformFile(file: file, bytes: bytes);
+      return _processFile(file, webOptions: webOptions);
     }
 
     final results = await runIndexedTasks(
@@ -177,6 +280,29 @@ class FilePickerWeb extends FilePickerPlatform {
       sequential: webOptions.readSequential,
     );
     return results.whereType<PlatformFile>().toList();
+  }
+
+  /// Converts one picked browser [file] to a [PlatformFile] according to
+  /// [webOptions], keeping the [handle] it was picked through, if any.
+  Future<PlatformFile> _processFile(
+    File file, {
+    FileSystemFileHandle? handle,
+    required FilePickerWebOptions webOptions,
+  }) async {
+    if (webOptions.withReadStream) {
+      return _createWebPlatformFile(
+        file: file,
+        handle: handle,
+        readStream: streamBlobInChunks(file),
+      );
+    }
+
+    if (!shouldPreloadBytes(file.size, withData: webOptions.withData)) {
+      return _createWebPlatformFile(file: file, handle: handle);
+    }
+
+    final bytes = await _readSingleFileBytes(file);
+    return _createWebPlatformFile(file: file, handle: handle, bytes: bytes);
   }
 
   /// Reads an HTML [File] content into a [Uint8List] using [FileReader].
@@ -212,12 +338,15 @@ class FilePickerWeb extends FilePickerPlatform {
   /// The URI always points at the picked [file] itself, which avoids creating a copy.
   WebPlatformFile _createWebPlatformFile({
     required File file,
+    FileSystemFileHandle? handle,
     Uint8List? bytes,
     Stream<Uint8List>? readStream,
   }) {
     return WebPlatformFile(
       name: file.name,
       uri: Uri.parse(URL.createObjectURL(file)),
+      file: file,
+      handle: handle,
       bytesLength: bytes != null ? bytes.length : file.size,
       bytes: bytes,
       readStream: readStream,
